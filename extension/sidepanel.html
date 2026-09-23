@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header>
+    <h1>Foothold</h1>
+    <p>Runs in your logged-in LinkedIn tab. Drafts only — never sends.</p>
+  </header>
+
+  <details id="settings" class="card">
+    <summary>Settings</summary>
+    <label>OpenAI API key
+      <input id="openaiKey" type="password" placeholder="sk-..." autocomplete="off" />
+    </label>
+    <label>Google OAuth Client ID
+      <input id="googleClientId" type="text" placeholder="….apps.googleusercontent.com" />
+    </label>
+    <div class="row">
+      <button id="saveSettings" type="button">Save settings</button>
+      <button id="connectGmail" type="button" class="secondary">Connect Gmail</button>
+    </div>
+    <p class="hint" id="gmailStatus">Gmail: not connected. CSV still downloads if drafts fail.</p>
+    <p class="hint">Redirect URI to register in Google Cloud:</p>
+    <div class="row">
+      <input id="redirectUri" type="text" readonly />
+      <button id="copyRedirect" type="button" class="secondary">Copy</button>
+    </div>
+  </details>
+
+  <nav class="tabs">
+    <button type="button" class="tab on" data-tab="jobs">Job seeker</button>
+    <button type="button" class="tab" data-tab="freelance">Freelancer</button>
+  </nav>
+
+  <section id="panel-jobs" class="card panel">
+    <label>Target role
+      <input id="targetRole" type="text" placeholder="e.g. Associate Product Manager" />
+    </label>
+
+    <label>Years of experience
+      <input id="yearsExp" type="number" min="0" max="50" step="1" inputmode="numeric" placeholder="e.g. 2" />
+    </label>
+
+    <fieldset class="seg">
+      <legend>Workplace</legend>
+      <label><input type="radio" name="workplaceJobs" value="all" checked /><span>All</span></label>
+      <label><input type="radio" name="workplaceJobs" value="remote" /><span>Remote</span></label>
+      <label><input type="radio" name="workplaceJobs" value="hybrid" /><span>Hybrid</span></label>
+      <label><input type="radio" name="workplaceJobs" value="onsite" /><span>Onsite</span></label>
+    </fieldset>
+
+    <button id="suggestRolesJobs" type="button" class="secondary wide">Suggest similar roles</button>
+    <div id="rolesJobs" class="roles"><p class="hint">Titles you tick here become the LinkedIn searches.</p></div>
+
+    <label class="file">Resume <span class="opt">optional — PDF, DOCX or TXT, used when drafting</span>
+      <input id="resumeFile" type="file" accept=".pdf,.docx,.doc,.txt,.md,.text" />
+    </label>
+    <details id="resumeSummaryBox" class="resume-summary hidden">
+      <summary><strong id="resumeFileName"></strong> — AI summary</summary>
+      <p id="resumeSummaryText"></p>
+      <button id="clearResume" type="button" class="secondary">Clear summary</button>
+    </details>
+
+    <button id="runJobs" type="button" class="primary">Run on LinkedIn</button>
+  </section>
+
+  <section id="panel-freelance" class="card panel hidden">
+    <label>Expertise
+      <textarea id="expertise" rows="4" placeholder="e.g. React + Node, marketplace MVPs, Stripe billing…"></textarea>
+    </label>
+    <label>Project links <span class="opt">one URL per line</span>
+      <textarea id="projectLinks" rows="3" placeholder="https://…"></textarea>
+    </label>
+
+    <fieldset class="seg">
+      <legend>Workplace</legend>
+      <label><input type="radio" name="workplaceFreelance" value="all" checked /><span>All</span></label>
+      <label><input type="radio" name="workplaceFreelance" value="remote" /><span>Remote</span></label>
+      <label><input type="radio" name="workplaceFreelance" value="hybrid" /><span>Hybrid</span></label>
+      <label><input type="radio" name="workplaceFreelance" value="onsite" /><span>Onsite</span></label>
+    </fieldset>
+
+    <button id="suggestRolesFreelance" type="button" class="secondary wide">Suggest similar roles</button>
+    <div id="rolesFreelance" class="roles"><p class="hint">Titles clients hire for. Tick the ones worth searching.</p></div>
+
+    <button id="runFreelance" type="button" class="primary">Run on LinkedIn</button>
+  </section>
+
+  <section class="card">
+    <h2>Status</h2>
+    <pre id="log">Idle.</pre>
+    <button id="downloadCsv" type="button" class="secondary" disabled>Download CSV report</button>
+  </section>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

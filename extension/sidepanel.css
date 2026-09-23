@@ -1,0 +1,158 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  /* Side panel is user-resizable, so follow its width instead of fixing one. */
+  overflow-x: hidden;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #111;
+  background: #f4f4f1;
+}
+header { padding: 14px 14px 0; }
+h1 { font-size: 16px; margin: 0 0 4px; }
+header p, .hint { color: #555; margin: 0; }
+.hint { font-size: 12px; margin-top: 8px; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 8px; color: #444; }
+.card {
+  margin: 10px 12px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+}
+label { display: block; font-weight: 600; margin: 8px 0; }
+input, textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font: inherit;
+}
+.row { display: flex; gap: 8px; margin-top: 8px; }
+.row > * { min-width: 0; }
+button {
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.primary { background: #0a66c2; color: #fff; width: 100%; margin-top: 8px; }
+.secondary { background: #eee; }
+.tabs { display: flex; gap: 6px; padding: 0 12px; }
+.tab {
+  flex: 1;
+  background: #e6e6e2;
+}
+.tab.on { background: #0a66c2; color: #fff; }
+.hidden { display: none; }
+#log {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #111;
+  color: #d7ffd7;
+  padding: 8px;
+  border-radius: 6px;
+  min-height: 64px;
+  max-height: 140px;
+  overflow: auto;
+  font-size: 11px;
+}
+#downloadCsv { width: 100%; margin-top: 8px; }
+
+/* Settings collapses once it is filled in. */
+details.card > summary {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #444;
+  font-weight: 700;
+  cursor: pointer;
+}
+details.card[open] > summary { margin-bottom: 8px; }
+
+.opt { font-weight: 400; color: #777; font-size: 11px; }
+.file { font-weight: 400; font-size: 12px; color: #555; }
+.wide { width: 100%; margin-top: 4px; }
+
+/* Workplace picker: radios drawn as a segmented row. */
+.seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  margin: 12px 0 10px;
+}
+.seg legend {
+  width: 100%;
+  font-weight: 600;
+  padding: 0;
+  margin-bottom: 6px;
+}
+.seg label {
+  flex: 1;
+  margin: 0;
+  font-weight: 600;
+  font-size: 12px;
+}
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg span {
+  display: block;
+  text-align: center;
+  padding: 7px 2px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+.seg input:checked + span {
+  background: #0a66c2;
+  border-color: #0a66c2;
+  color: #fff;
+}
+.seg input:focus-visible + span { outline: 2px solid #0a66c2; outline-offset: 2px; }
+
+/* Similar-roles checklist. */
+.roles { margin: 8px 0 4px; }
+.roles .hint { margin: 0; }
+.roles ul { list-style: none; margin: 0; padding: 0; }
+.roles li { margin: 0 0 4px; }
+.roles li label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 7px 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+  font-weight: 500;
+  cursor: pointer;
+}
+.roles li input { width: auto; margin: 2px 0 0; flex: none; }
+.roles li .why { display: block; font-weight: 400; color: #666; font-size: 11px; margin-top: 2px; }
+.roles .addRow { display: flex; gap: 6px; margin-top: 6px; }
+.roles .addRow input { margin-top: 0; }
+.roles .addRow button { flex: none; }
+
+#redirectUri { margin-top: 0; min-width: 0; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+#copyRedirect { flex: none; }
+
+/* Stored resume summary, replaced only on re-upload. Collapsed by default. */
+.resume-summary {
+  margin: 8px 0 4px;
+  padding: 10px;
+  border: 1px solid #cfe0f3;
+  border-radius: 8px;
+  background: #f2f7fd;
+}
+.resume-summary > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #33507a;
+}
+.resume-summary > summary strong { overflow-wrap: anywhere; }
+.resume-summary p { margin: 8px 0 6px; }
+#resumeSummaryText { font-size: 12px; color: #333; white-space: pre-wrap; overflow-wrap: anywhere; }

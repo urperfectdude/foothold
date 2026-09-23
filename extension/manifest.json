@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Foothold",
+  "version": "1.0.0",
+  "description": "Find LinkedIn hiring posts, draft Gmail replies with OpenAI, download a CSV report.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA34Bfe1rVZZSPibpBQltOk7MSl+VImGV6SMWOkd+GnlCQBlxS0ipmto2vClWtejFHGCkG3P+P8yrXcNtheBwKJ1NRYpGFwDyf2+17xatfQw91V7BOj58OitZFf67tXsMTn5riyFVKZRgipo/geY81UqMlLFqyhj17WS3RdQRjNFw5f3cbtSoRwyUawA7D7QeUm/O+ll5IG84VWezL12ZrxD/4OM8D2x4DjRwbsAfMdI6UeR7H8dCmn2cVsmTCf/ojGE1bIzbM9LwAzfYAMvwgDJIPJuezK/4ACZfEYut7w9QZ7ZLAeHA1BJ4uEnI3X75JRjPLyl2yr8n4+WRL0KasPwIDAQAB",
+  "action": {
+    "default_title": "Foothold"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "tabs",
+    "scripting",
+    "identity",
+    "downloads",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://www.linkedin.com/*",
+    "https://api.openai.com/*",
+    "https://gmail.googleapis.com/*",
+    "https://accounts.google.com/*",
+    "https://www.googleapis.com/*",
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.linkedin.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+credentials.json
+token.json
+results_*.csv
+results_*.json
+__pycache__/
+key.pem
+venv/
