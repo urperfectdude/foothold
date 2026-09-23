@@ -36,18 +36,31 @@ below.
 
 ## Settings in the panel
 
-1. Paste an **OpenAI API key**. It is stored in `chrome.storage.local` (plain text, readable
-   by anything with access to your Chrome profile) and only ever leaves as the
-   `Authorization` header to `api.openai.com`.
-2. **Connect Gmail** (optional — CSV still works without it):
-   - Google Cloud → enable Gmail API.
-   - OAuth client type **Chrome extension**, item ID = the pinned ID above.
-   - Or type **Web application** with this authorized redirect URI:
-     `https://pjdckgljbogpnglkdnfgegmdfngoeefa.chromiumapp.org/`
-   - Add yourself as an OAuth **Test user** if the app is in Testing.
-   - Paste the Client ID into the panel and click **Connect Gmail**.
+Paste an **OpenAI API key**. It is stored in `chrome.storage.local` (plain text, readable by
+anything with access to your Chrome profile) and only ever leaves as the `Authorization`
+header to `api.openai.com`.
 
-The old Desktop-app `credentials.json` is for the Python script only, not this extension.
+That is the only thing you type. Gmail is one button.
+
+### Gmail (optional — CSV still works without it)
+
+Click **Connect Gmail** and Chrome shows its own account chooser and consent sheet. There is
+no client ID to paste and no redirect URI to register: the client ID lives in
+`manifest.json` under `oauth2`, and Chrome handles consent, caching and **token refresh**.
+
+Setting that up is a one-time job, already done unless `manifest.json` still says
+`PASTE_CHROME_EXTENSION_CLIENT_ID_HERE`:
+
+1. Google Cloud → enable the Gmail API.
+2. Credentials → Create credentials → OAuth client ID → type **Chrome extension**.
+3. Item ID: `pjdckgljbogpnglkdnfgegmdfngoeefa` (this is why the ID is pinned).
+4. Paste the resulting client ID into `manifest.json` → `oauth2.client_id`.
+5. Add yourself as an OAuth **Test user** if the consent screen is in Testing.
+
+You must be signed into Chrome with the account you want drafts in. If a token expires
+mid-run, the extension silently fetches a new one and retries the draft once.
+
+The old Desktop-app `credentials.json` is for `gmail_drafts.py` only, not this extension.
 
 ## Run
 
@@ -90,6 +103,61 @@ The CSV records where each address came from in `email_source` (`text` or `image
 `apply_url` found. **Check image-sourced addresses before sending** — OCR can confuse `l`/`1`
 and `o`/`0`, and a wrong address bounces. Drafts are never sent automatically, so you always
 get to look first.
+
+### Sweeping combinations
+
+**Workplace multi-selects** — All / Remote / Hybrid / Onsite, with **All** ticked by default.
+Every ticked value becomes an axis, and Run sweeps the matrix of ticked roles x ticked
+workplaces. **All** means one search with no workplace keyword, which is the widest net and
+the only one that catches posts that never state their work arrangement. The line underneath
+shows the real cost before you commit — `4 roles x 3 workplaces = 12 searches, about 2 min`.
+
+A red **Stop run** button appears in the Status box while a sweep is running. It finishes the
+search already in flight, then stops cleanly — posts scraped so far are still scored, drafted
+and downloadable, and everything seen is remembered. It is not a hard kill, so expect up to
+about 12 seconds before it takes effect.
+
+Capped at 24 searches per sweep. Each search costs roughly 12 seconds, and there is a random
+1.5–4s pause between them, because two dozen back-to-back searches is a conspicuous pattern.
+
+Results from every search are pooled, deduped, and scored **in batches of 10 so every post is
+judged** — earlier builds scored only the first 28 of a run, which silently discarded most of
+a sweep.
+
+**Posts are remembered across runs.** A repeat sweep only surfaces what is new, and the status
+line reports how many were skipped. **Reset seen posts** clears that memory (it holds the most
+recent 4000 post ids).
+
+### Preferences
+
+Both modes have a free-text **Preferences** box. Write what you actually want — cities,
+industries, things to avoid, anything ("Bangalore, fintech, not agencies, non Indian").
+
+Preferences are **intent, not keywords**, so before searching they are classified once by
+OpenAI into three buckets:
+
+- **keywords** — only terms that appear verbatim in real posts (`Bangalore`, `fintech`).
+  These get appended to the LinkedIn search.
+- **exclude** — disqualifying criteria (`companies based in India`). Applied when scoring.
+- **include** — soft positive criteria. Applied when scoring.
+
+This matters: typing `non indian` used to be appended straight to the query as
+`hiring "Product Manager" non indian`, which no post contains, so every search returned
+nothing. Now it becomes an exclusion rule and the search itself stays broad.
+
+The status box prints what it decided each run, so you can see which preferences are
+searching and which are only filtering. Classifications are cached per preference text, so
+re-running costs nothing extra.
+
+### Posted date
+
+Both modes have a **Posted** filter — Any time / 24 hours / Week / Month. Unlike workplace
+and years, this one is a real LinkedIn facet: it becomes a `datePosted` URL parameter and
+LinkedIn does the filtering server-side, so it costs no recall. Use **Week** or **24 hours**
+on repeat runs to see only what is new.
+
+The parameter values live in `DATE_PARAM` in `extension/background.js`. They are undocumented
+LinkedIn internals, so if recency stops working, fix them there.
 
 ### What the workplace filter actually does
 

@@ -59,7 +59,29 @@ button {
   overflow: auto;
   font-size: 11px;
 }
-#downloadCsv { width: 100%; margin-top: 8px; }
+#stopRun {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  background: #b3261e;
+  color: #fff;
+}
+#stopRun.hidden { display: none; }
+
+#downloadCsv,
+#resetSeen {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+/* Clearing history is destructive, so it should not read as a primary action. */
+#resetSeen {
+  background: none;
+  border: 1px solid #ddd;
+  color: #777;
+  font-weight: 500;
+}
+#resetSeen:hover { border-color: #b3261e; color: #b3261e; }
 
 /* Settings collapses once it is filled in. */
 details.card > summary {
@@ -76,7 +98,7 @@ details.card[open] > summary { margin-bottom: 8px; }
 .file { font-weight: 400; font-size: 12px; color: #555; }
 .wide { width: 100%; margin-top: 4px; }
 
-/* Workplace picker: radios drawn as a segmented row. */
+/* Workplace and Posted drawn as segmented word rows. */
 .seg {
   display: flex;
   flex-wrap: wrap;
@@ -137,8 +159,6 @@ details.card[open] > summary { margin-bottom: 8px; }
 .roles .addRow input { margin-top: 0; }
 .roles .addRow button { flex: none; }
 
-#redirectUri { margin-top: 0; min-width: 0; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-#copyRedirect { flex: none; }
 
 /* Stored resume summary, replaced only on re-upload. Collapsed by default. */
 .resume-summary {

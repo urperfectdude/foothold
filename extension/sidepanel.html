@@ -15,19 +15,11 @@
     <label>OpenAI API key
       <input id="openaiKey" type="password" placeholder="sk-..." autocomplete="off" />
     </label>
-    <label>Google OAuth Client ID
-      <input id="googleClientId" type="text" placeholder="….apps.googleusercontent.com" />
-    </label>
     <div class="row">
       <button id="saveSettings" type="button">Save settings</button>
       <button id="connectGmail" type="button" class="secondary">Connect Gmail</button>
     </div>
     <p class="hint" id="gmailStatus">Gmail: not connected. CSV still downloads if drafts fail.</p>
-    <p class="hint">Redirect URI to register in Google Cloud:</p>
-    <div class="row">
-      <input id="redirectUri" type="text" readonly />
-      <button id="copyRedirect" type="button" class="secondary">Copy</button>
-    </div>
   </details>
 
   <nav class="tabs">
@@ -46,11 +38,24 @@
 
     <fieldset class="seg">
       <legend>Workplace</legend>
-      <label><input type="radio" name="workplaceJobs" value="all" checked /><span>All</span></label>
-      <label><input type="radio" name="workplaceJobs" value="remote" /><span>Remote</span></label>
-      <label><input type="radio" name="workplaceJobs" value="hybrid" /><span>Hybrid</span></label>
-      <label><input type="radio" name="workplaceJobs" value="onsite" /><span>Onsite</span></label>
+      <label><input type="checkbox" name="workplaceJobs" value="all" checked /><span>All</span></label>
+      <label><input type="checkbox" name="workplaceJobs" value="remote" /><span>Remote</span></label>
+      <label><input type="checkbox" name="workplaceJobs" value="hybrid" /><span>Hybrid</span></label>
+      <label><input type="checkbox" name="workplaceJobs" value="onsite" /><span>Onsite</span></label>
     </fieldset>
+    <p class="hint" id="sweepCountJobs"></p>
+
+    <fieldset class="seg">
+      <legend>Posted</legend>
+      <label><input type="radio" name="datePostedJobs" value="any" checked /><span>Any time</span></label>
+      <label><input type="radio" name="datePostedJobs" value="day" /><span>24 hours</span></label>
+      <label><input type="radio" name="datePostedJobs" value="week" /><span>Week</span></label>
+      <label><input type="radio" name="datePostedJobs" value="month" /><span>Month</span></label>
+    </fieldset>
+
+    <label>Preferences <span class="opt">cities, industries, domains — comma separated</span>
+      <textarea id="prefsJobs" rows="2" placeholder="e.g. Bangalore, Remote-first, fintech, B2B SaaS"></textarea>
+    </label>
 
     <button id="suggestRolesJobs" type="button" class="secondary wide">Suggest similar roles</button>
     <div id="rolesJobs" class="roles"><p class="hint">Titles you tick here become the LinkedIn searches.</p></div>
@@ -77,11 +82,24 @@
 
     <fieldset class="seg">
       <legend>Workplace</legend>
-      <label><input type="radio" name="workplaceFreelance" value="all" checked /><span>All</span></label>
-      <label><input type="radio" name="workplaceFreelance" value="remote" /><span>Remote</span></label>
-      <label><input type="radio" name="workplaceFreelance" value="hybrid" /><span>Hybrid</span></label>
-      <label><input type="radio" name="workplaceFreelance" value="onsite" /><span>Onsite</span></label>
+      <label><input type="checkbox" name="workplaceFreelance" value="all" checked /><span>All</span></label>
+      <label><input type="checkbox" name="workplaceFreelance" value="remote" /><span>Remote</span></label>
+      <label><input type="checkbox" name="workplaceFreelance" value="hybrid" /><span>Hybrid</span></label>
+      <label><input type="checkbox" name="workplaceFreelance" value="onsite" /><span>Onsite</span></label>
     </fieldset>
+    <p class="hint" id="sweepCountFreelance"></p>
+
+    <fieldset class="seg">
+      <legend>Posted</legend>
+      <label><input type="radio" name="datePostedFreelance" value="any" checked /><span>Any time</span></label>
+      <label><input type="radio" name="datePostedFreelance" value="day" /><span>24 hours</span></label>
+      <label><input type="radio" name="datePostedFreelance" value="week" /><span>Week</span></label>
+      <label><input type="radio" name="datePostedFreelance" value="month" /><span>Month</span></label>
+    </fieldset>
+
+    <label>Preferences <span class="opt">cities, industries, domains — comma separated</span>
+      <textarea id="prefsFreelance" rows="2" placeholder="e.g. US clients, healthcare, Shopify, equity-friendly"></textarea>
+    </label>
 
     <button id="suggestRolesFreelance" type="button" class="secondary wide">Suggest similar roles</button>
     <div id="rolesFreelance" class="roles"><p class="hint">Titles clients hire for. Tick the ones worth searching.</p></div>
@@ -92,7 +110,9 @@
   <section class="card">
     <h2>Status</h2>
     <pre id="log">Idle.</pre>
+    <button id="stopRun" type="button" class="hidden">Stop run</button>
     <button id="downloadCsv" type="button" class="secondary" disabled>Download CSV report</button>
+    <button id="resetSeen" type="button" class="secondary">Reset seen posts</button>
   </section>
   <script src="sidepanel.js"></script>
 </body>

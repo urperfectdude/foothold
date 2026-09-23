@@ -2,11 +2,17 @@ const $ = (id) => document.getElementById(id);
 let lastRows = [];
 
 // Everything the user types, keyed the same way in chrome.storage.local.
-const FIELDS = ["targetRole", "yearsExp", "expertise", "projectLinks"];
+const FIELDS = ["targetRole", "yearsExp", "expertise", "projectLinks", "prefsJobs", "prefsFreelance"];
 // Saved on every keystroke: these are short, usually pasted, and losing them
 // mid-session is worse than the extra writes.
-const CREDENTIALS = ["openaiKey", "googleClientId"];
-const RADIOS = ["workplaceJobs", "workplaceFreelance"];
+const CREDENTIALS = ["openaiKey"];
+const RADIOS = { datePostedJobs: "any", datePostedFreelance: "any" };
+// Workplace multi-selects: each ticked value is one axis of the sweep.
+const CHECKS = { workplaceJobs: ["all"], workplaceFreelance: ["all"] };
+// Bumped when a stored selection no longer matches the options on screen.
+const UI_VERSION = 2;
+const MAX_QUERIES = 24;
+const SECONDS_PER_QUERY = 12;
 // Suggested titles per mode: [{ title, why, checked }]
 const roleState = { jobs: [], freelance: [] };
 // The uploaded resume is kept as an AI summary, not raw text.
@@ -23,19 +29,27 @@ document.querySelectorAll(".tab").forEach((btn) => {
 
 chrome.storage.local.get(null, (s) => {
   for (const f of [...CREDENTIALS, ...FIELDS]) if (s[f]) $(f).value = s[f];
-  for (const name of RADIOS) setRadio(name, s[name] || "all");
+  for (const [name, def] of Object.entries(RADIOS)) setRadio(name, s[name] || def);
+  // The dropdown build stored workplaces that no longer exist here, so reset once.
+  const stale = s.uiVersion !== UI_VERSION;
+  if (stale) chrome.storage.local.set({ uiVersion: UI_VERSION, ...CHECKS });
+  for (const [name, def] of Object.entries(CHECKS)) {
+    // An empty stored array is truthy, so check length rather than falsiness.
+    setChecks(name, !stale && s[name]?.length ? s[name] : def);
+  }
   resumeSummary = s.resumeSummary || "";
   if (resumeSummary) showSummary(s.resumeFileName || "Resume", resumeSummary);
   roleState.jobs = s.rolesJobs || [];
   roleState.freelance = s.rolesFreelance || [];
   if (roleState.jobs.length) renderRoles("jobs");
   if (roleState.freelance.length) renderRoles("freelance");
-  $("gmailStatus").textContent = s.gmailToken
-    ? "Gmail: connected (drafts only)."
-    : "Gmail: not connected. CSV still downloads if drafts fail.";
+  refreshGmailStatus();
+  // Left over from the old paste-your-client-ID flow.
+  chrome.storage.local.remove(["gmailToken", "googleClientId", "resume"]);
   // Keep Settings open until there is a key to remember.
   $("settings").open = !s.openaiKey;
   checkBuild();
+  updateSweepCount();
   // A run that died mid-way leaves its scraped posts behind.
   const p = s.partialRun;
   if (p && p.posts?.length && p.done?.length < p.queries?.length) {
@@ -52,40 +66,46 @@ for (const f of FIELDS) {
 for (const f of CREDENTIALS) {
   $(f).addEventListener("input", () => chrome.storage.local.set({ [f]: $(f).value.trim() }));
 }
-for (const name of RADIOS) {
+for (const name of Object.keys(RADIOS)) {
   document.querySelectorAll(`input[name="${name}"]`).forEach((r) => {
     r.addEventListener("change", () => chrome.storage.local.set({ [name]: r.value }));
   });
 }
-
-// Show the exact redirect URI Chrome will use, so Google Cloud can match it verbatim.
-const REDIRECT_URI = chrome.identity.getRedirectURL();
-$("redirectUri").value = REDIRECT_URI;
-$("copyRedirect").addEventListener("click", async () => {
-  await navigator.clipboard.writeText(REDIRECT_URI);
-  log("Redirect URI copied. Paste it into your Web application OAuth client.");
-});
+for (const name of Object.keys(CHECKS)) {
+  document.querySelectorAll(`input[name="${name}"]`).forEach((c) => {
+    c.addEventListener("change", () => {
+      chrome.storage.local.set({ [name]: getChecks(name) });
+      updateSweepCount();
+    });
+  });
+}
 
 $("saveSettings").addEventListener("click", async () => {
-  await chrome.storage.local.set({
-    openaiKey: $("openaiKey").value.trim(),
-    googleClientId: $("googleClientId").value.trim(),
-  });
+  await chrome.storage.local.set({ openaiKey: $("openaiKey").value.trim() });
   log("Settings saved.");
 });
 
 $("connectGmail").addEventListener("click", async () => {
-  const clientId = $("googleClientId").value.trim();
-  await chrome.storage.local.set({ googleClientId: clientId });
   log("Opening Google sign-in…");
-  const res = await send({ type: "CONNECT_GMAIL", clientId });
-  if (res?.ok) {
-    $("gmailStatus").textContent = "Gmail: connected (drafts only).";
+  const res = await send({ type: "CONNECT_GMAIL" });
+  if (res.ok) {
+    setGmailStatus(true);
     log("Gmail connected.");
   } else {
-    log("Gmail failed: " + (res?.error || "unknown") + "\nAdd this extension's redirect URI in Google Cloud.");
+    log("Gmail failed: " + (res.error || "unknown"));
   }
 });
+
+async function refreshGmailStatus() {
+  const res = await send({ type: "GMAIL_STATUS" });
+  setGmailStatus(!!res.connected);
+}
+
+function setGmailStatus(connected) {
+  $("gmailStatus").textContent = connected
+    ? "Gmail: connected (drafts only)."
+    : "Gmail: not connected. CSV still downloads if drafts fail.";
+}
 
 $("resumeFile").addEventListener("change", async (e) => {
   const file = e.target.files?.[0];
@@ -150,7 +170,9 @@ $("runJobs").addEventListener("click", () =>
     mode: "jobs",
     targetRole: $("targetRole").value.trim(),
     yearsExp: $("yearsExp").value,
-    workplace: getRadio("workplaceJobs"),
+    workplaces: getChecks("workplaceJobs"),
+    prefs: prefsFor("jobs"),
+    datePosted: getRadio("datePostedJobs"),
     resume: resumeSummary,
     selectedRoles: selectedRoles("jobs"),
     expertise: "",
@@ -163,13 +185,26 @@ $("runFreelance").addEventListener("click", () =>
     mode: "freelance",
     targetRole: "",
     yearsExp: "",
-    workplace: getRadio("workplaceFreelance"),
+    workplaces: getChecks("workplaceFreelance"),
+    prefs: prefsFor("freelance"),
+    datePosted: getRadio("datePostedFreelance"),
     resume: "",
     selectedRoles: selectedRoles("freelance"),
     expertise: $("expertise").value,
     projectLinks: $("projectLinks").value,
   })
 );
+
+$("stopRun").addEventListener("click", async () => {
+  $("stopRun").disabled = true;
+  await send({ type: "STOP" });
+  log("Stopping… the current search has to finish first.");
+});
+
+$("resetSeen").addEventListener("click", async () => {
+  const res = await send({ type: "RESET_SEEN" });
+  log(res.ok ? `Cleared ${res.cleared} remembered posts. Next run starts fresh.` : "Could not reset.");
+});
 
 $("downloadCsv").addEventListener("click", () => {
   if (!lastRows.length) return;
@@ -182,7 +217,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "PROGRESS") log(msg.text);
 });
 
-const EXPECTED_BUILD = "2026-09-23e";
+const EXPECTED_BUILD = "2026-09-23o";
 const STALE =
   "Background script is out of date. Go to chrome://extensions and click the reload arrow on this extension.";
 
@@ -219,7 +254,8 @@ async function suggestRoles(mode) {
       mode,
       seed,
       yearsExp: mode === "jobs" ? $("yearsExp").value : "",
-      workplace: getRadio(mode === "jobs" ? "workplaceJobs" : "workplaceFreelance"),
+      workplaces: getChecks(mode === "jobs" ? "workplaceJobs" : "workplaceFreelance"),
+      prefs: prefsFor(mode),
       openaiKey: $("openaiKey").value.trim(),
     },
   });
@@ -253,6 +289,7 @@ function renderRoles(mode) {
     cb.addEventListener("change", () => {
       roleState[mode][i].checked = cb.checked;
       persistRoles(mode);
+      updateSweepCount();
     });
     const text = document.createElement("span");
     text.textContent = role.title;
@@ -291,6 +328,7 @@ function renderRoles(mode) {
   });
   row.append(input, add);
   box.appendChild(row);
+  updateSweepCount();
 }
 
 function persistRoles(mode) {
@@ -302,8 +340,12 @@ function selectedRoles(mode) {
   return roleState[mode].filter((r) => r.checked).map((r) => r.title);
 }
 
+function prefsFor(mode) {
+  return $(mode === "jobs" ? "prefsJobs" : "prefsFreelance").value.trim();
+}
+
 function getRadio(name) {
-  return document.querySelector(`input[name="${name}"]:checked`)?.value || "all";
+  return document.querySelector(`input[name="${name}"]:checked`)?.value || RADIOS[name];
 }
 
 function setRadio(name, value) {
@@ -311,20 +353,57 @@ function setRadio(name, value) {
   if (el) el.checked = true;
 }
 
+function getChecks(name) {
+  return [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((c) => c.value);
+}
+
+function setChecks(name, values) {
+  document.querySelectorAll(`input[name="${name}"]`).forEach((c) => {
+    c.checked = values.includes(c.value);
+  });
+}
+
+// Shows the real cost before committing to a long sweep.
+function updateSweepCount() {
+  for (const mode of ["jobs", "freelance"]) {
+    const suffix = mode === "jobs" ? "Jobs" : "Freelance";
+    const picked = getChecks("workplace" + suffix);
+    const out = $("sweepCount" + suffix);
+    if (!picked.length) {
+      out.textContent = "Pick at least one workplace to run.";
+      continue;
+    }
+    const roles = Math.max(1, selectedRoles(mode).length);
+    const total = Math.min(roles * picked.length, MAX_QUERIES);
+    const mins = Math.round((total * SECONDS_PER_QUERY) / 60);
+    const capped = roles * picked.length > MAX_QUERIES ? ` (capped from ${roles * picked.length})` : "";
+    out.textContent =
+      `${roles} role${roles > 1 ? "s" : ""} x ${picked.length} workplace${picked.length > 1 ? "s" : ""} = ` +
+      `${total} search${total > 1 ? "es" : ""}${capped}, about ${mins || 1} min.`;
+  }
+}
+
+
 async function start(fields) {
-  const { openaiKey, googleClientId } = await chrome.storage.local.get(["openaiKey", "googleClientId"]);
+  if (!fields.workplaces.length) {
+    log("Pick at least one workplace before running.");
+    return;
+  }
+  const { openaiKey } = await chrome.storage.local.get("openaiKey");
   $("downloadCsv").disabled = true;
   lastRows = [];
+  $("stopRun").disabled = false;
+  $("stopRun").classList.remove("hidden");
   log("Starting… keep LinkedIn logged in.");
   const res = await send({
     type: "RUN",
     payload: {
       ...fields,
       openaiKey: openaiKey || $("openaiKey").value.trim(),
-      googleClientId: googleClientId || $("googleClientId").value.trim(),
       maxScrolls: 4,
     },
   });
+  $("stopRun").classList.add("hidden");
   if (!res?.ok) {
     log("Failed: " + (res?.error || "unknown"));
     return;

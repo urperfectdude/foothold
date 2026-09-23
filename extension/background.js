@@ -1,5 +1,11 @@
 const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.compose";
-const BUILD = "2026-09-23e";
+const BUILD = "2026-09-23o";
+// Set by a STOP message; the run loops check it at each boundary.
+let stopRequested = false;
+const MAX_QUERIES = 24;
+const SCORE_BATCH = 10;
+// Remembered across runs so a repeat sweep only surfaces what is new.
+const SEEN_LIMIT = 4000;
 const MODEL = "gpt-4o-mini";
 // Vision is the fallback when a post's text has no email, so cap the spend.
 const MAX_VISION_CALLS = 12;
@@ -36,9 +42,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg.type === "CONNECT_GMAIL") {
-    connectGmail(msg.clientId)
+    connectGmail()
       .then((ok) => sendResponse({ ok }))
-      .catch((err) => sendResponse({ ok: false, error: String(err) }));
+      .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
+  if (msg.type === "STOP") {
+    stopRequested = true;
+    sendResponse({ ok: true });
+    return false;
+  }
+  if (msg.type === "RESET_SEEN") {
+    chrome.storage.local
+      .get("seenPosts")
+      .then(({ seenPosts }) =>
+        chrome.storage.local
+          .set({ seenPosts: [] })
+          .then(() => sendResponse({ ok: true, cleared: (seenPosts || []).length }))
+      );
+    return true;
+  }
+  if (msg.type === "GMAIL_STATUS") {
+    getGmailToken({ interactive: false })
+      .then((token) => sendResponse({ ok: true, connected: !!token }))
+      .catch(() => sendResponse({ ok: true, connected: false }));
     return true;
   }
 });
@@ -52,26 +79,41 @@ async function run(payload) {
     resume,
     targetRole,
     yearsExp,
-    workplace,
+    workplaces,
+    prefs,
+    datePosted,
     selectedRoles,
     maxScrolls,
   } = payload;
   if (!openaiKey) throw new Error("Add your OpenAI API key in Settings.");
+  stopRequested = false;
 
   postProgress("Loading profile context…");
   const projectContext = await loadProjectContext(projectLinks);
   const profile =
     mode === "freelance"
-      ? { mode, expertise: expertise || "", projects: projectContext, workplace }
+      ? { mode, expertise: expertise || "", projects: projectContext, workplaces, prefs: prefs || "" }
       : {
           mode,
           resume: (resume || "").slice(0, 12000),
           targetRole: targetRole || "",
           yearsExp: yearsExp || "",
-          workplace,
+          workplaces,
+          prefs: prefs || "",
         };
 
   // Freelance expertise is prose, not a title, so it is never a fallback query.
+  const prefPlan = await parsePrefs(openaiKey, prefs);
+  profile.prefPlan = prefPlan;
+  if (prefs) {
+    postProgress(
+      "Preferences → " +
+        (prefPlan.keywords.length ? `search: ${prefPlan.keywords.join(", ")}` : "no search terms") +
+        (prefPlan.exclude.length ? ` · exclude: ${prefPlan.exclude.join(", ")}` : "") +
+        (prefPlan.include.length ? ` · prefer: ${prefPlan.include.join(", ")}` : "")
+    );
+  }
+
   const titles = pickTitles(selectedRoles, mode === "freelance" ? "" : targetRole);
   if (!titles.length) {
     throw new Error(
@@ -84,13 +126,16 @@ async function run(payload) {
 
   const tab = await ensureLinkedInTab();
   const posts = [];
+  const previously = new Set(await loadSeen());
   const seen = new Set();
+  let skipped = 0;
   await chrome.storage.local.set({
     partialRun: { startedAt: Date.now(), queries: searchQueries, done: [], posts: [] },
   });
   for (const q of searchQueries) {
+    if (stopRequested) break;
     postProgress(`Searching LinkedIn: ${q}`);
-    await navigate(tab.id, linkedinSearchUrl(q));
+    await navigate(tab.id, linkedinSearchUrl(q, datePosted));
     await inject(tab.id);
     const batch = await chrome.tabs.sendMessage(tab.id, {
       type: "SCRAPE",
@@ -100,39 +145,64 @@ async function run(payload) {
       const id = p.post_url + (p.text || "").slice(0, 60);
       if (seen.has(id)) continue;
       seen.add(id);
+      if (previously.has(id)) {
+        skipped++;
+        continue;
+      }
       posts.push(p);
     }
+    // Two dozen searches back to back is a conspicuous pattern.
+    await sleep(1500 + Math.random() * 2500);
     // The MV3 worker can be killed mid-run; keep scraped posts recoverable.
     await savePartial(searchQueries, q, posts);
   }
 
+  await saveSeen([...seen]);
   if (!posts.length) {
-    return { ok: true, rows: [], note: "No posts scraped. Open LinkedIn, log in, then run again." };
+    return {
+      ok: true,
+      rows: [],
+      note: skipped
+        ? `Nothing new. ${skipped} post(s) were already reviewed — use Reset seen posts to see them again.`
+        : "No posts scraped. Open LinkedIn, log in, then run again.",
+    };
   }
 
   await fillContactsFromImages(openaiKey, posts);
 
-  postProgress(`Scoring ${posts.length} posts with OpenAI…`);
-  const judged = await openaiJson(openaiKey, matchPrompt(profile, posts.slice(0, 28)));
-  const matches = (judged.matches || []).filter((m) => m.include);
-  const rows = matches.map((m) => {
-    const post = posts[m.index] || {};
-    return {
-      post_url: post.post_url || "",
-      poster_name: post.poster_name || "",
-      poster_profile: post.poster_profile || "",
-      email: (m.to_email || post.email || "").trim(),
-      email_source: post.email_source || (post.email ? "text" : ""),
-      apply_url: post.apply_url || "",
-      snippet: (post.text || "").slice(0, 300).replace(/\n/g, " "),
-      why: m.why || "",
-      subject: m.subject || "",
-      body: m.body || "",
-      action: "",
-    };
-  });
+  const rows = [];
+  for (let start = 0; start < posts.length; start += SCORE_BATCH) {
+    if (stopRequested) break;
+    const chunk = posts.slice(start, start + SCORE_BATCH);
+    postProgress(`Scoring ${start + chunk.length}/${posts.length} posts…`);
+    let judged;
+    try {
+      judged = await openaiJson(openaiKey, matchPrompt(profile, chunk));
+    } catch (e) {
+      console.warn("scoring batch failed:", String(e));
+      continue;
+    }
+    for (const m of (judged.matches || []).filter((x) => x.include)) {
+      // Indexes are relative to the chunk.
+      const post = chunk[m.index];
+      if (!post) continue;
+      rows.push({
+        post_url: post.post_url || "",
+        poster_name: post.poster_name || "",
+        poster_profile: post.poster_profile || "",
+        email: (m.to_email || post.email || "").trim(),
+        email_source: post.email_source || (post.email ? "text" : ""),
+        apply_url: post.apply_url || "",
+        snippet: (post.text || "").slice(0, 300).replace(/\n/g, " "),
+        why: m.why || "",
+        subject: m.subject || "",
+        body: m.body || "",
+        action: "",
+      });
+    }
+  }
 
-  const token = await getStoredGmailToken();
+  const token = await getGmailToken({ interactive: false });
   for (const row of rows) {
     if (!row.email || !row.body) {
       row.action = row.email ? "email_found_no_draft" : "manual_dm_needed";
@@ -152,7 +222,29 @@ async function run(payload) {
   }
 
   await chrome.storage.local.set({ partialRun: null });
-  return { ok: true, rows, queries: searchQueries };
+  return {
+    ok: true,
+    rows,
+    queries: searchQueries,
+    note: `${stopRequested ? "Stopped early. " : ""}${searchQueries.length} searches, ${
+      posts.length
+    } new posts${skipped ? `, ${skipped} skipped as already seen` : ""}.`,
+  };
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function loadSeen() {
+  const { seenPosts } = await chrome.storage.local.get("seenPosts");
+  return seenPosts || [];
+}
+
+async function saveSeen(ids) {
+  const merged = [...new Set([...(await loadSeen()), ...ids])];
+  // Keep the most recent ids only, so storage cannot grow without bound.
+  await chrome.storage.local.set({ seenPosts: merged.slice(-SEEN_LIMIT) });
 }
 
 async function savePartial(queries, lastQuery, posts) {
@@ -167,8 +259,14 @@ function postProgress(text) {
   chrome.runtime.sendMessage({ type: "PROGRESS", text }).catch(() => {});
 }
 
-function linkedinSearchUrl(q) {
-  return "https://www.linkedin.com/search/results/content/?keywords=" + encodeURIComponent(q);
+// Undocumented LinkedIn internals; if recency stops working, fix the values here.
+const DATE_PARAM = { day: "past-24h", week: "past-week", month: "past-month" };
+
+function linkedinSearchUrl(q, datePosted) {
+  let url = "https://www.linkedin.com/search/results/content/?keywords=" + encodeURIComponent(q);
+  const window_ = DATE_PARAM[datePosted];
+  if (window_) url += "&datePosted=" + encodeURIComponent(window_);
+  return url;
 }
 
 async function ensureLinkedInTab() {
@@ -239,23 +337,77 @@ function pickTitles(selectedRoles, typed) {
 
 const WORKPLACE_WORD = { remote: "remote", hybrid: "hybrid", onsite: "on-site" };
 
+// Preferences are intent, not keywords. "non indian" appears in no post, so
+// appending it verbatim ANDs the query down to nothing. Let the model decide
+// what is literal enough to search for and what is only a judgement call.
+const EMPTY_PLAN = { keywords: [], include: [], exclude: [] };
+
+async function parsePrefs(openaiKey, prefs) {
+  const text = String(prefs || "").trim();
+  if (!text) return EMPTY_PLAN;
+
+  const { prefPlanCache } = await chrome.storage.local.get("prefPlanCache");
+  const cache = prefPlanCache || {};
+  if (cache[text]) return cache[text];
+
+  let plan;
+  try {
+    const data = await openaiJson(openaiKey, {
+      system: "You split job-search preferences into search keywords and filter criteria. Return JSON only.",
+      user: `Preferences: ${text.slice(0, 500)}
+
+"keywords" may ONLY contain words that would appear verbatim in a hiring post:
+city names, industry names, technologies, company names. At most 3.
+Never put a negation, a nationality or origin preference, a quality judgement,
+a salary expectation or anything abstract in "keywords" — those go in
+"include" or "exclude" instead. An empty "keywords" list is correct and normal.
+
+"include" is positive criteria to judge a post against.
+"exclude" is what should disqualify a post.
+
+Return {"keywords":[],"include":[],"exclude":[]}`,
+    });
+    plan = {
+      keywords: (data.keywords || []).map(String).filter((k) => k && k.length <= 30).slice(0, 3),
+      include: (data.include || []).map(String).filter(Boolean).slice(0, 5),
+      exclude: (data.exclude || []).map(String).filter(Boolean).slice(0, 5),
+    };
+  } catch (e) {
+    // Never fall back to raw keywords; that is the behaviour that returns zero posts.
+    console.warn("parsePrefs:", String(e));
+    plan = { keywords: [], include: [text.slice(0, 200)], exclude: [] };
+  }
+
+  const keys = Object.keys(cache);
+  if (keys.length > 20) delete cache[keys[0]];
+  cache[text] = plan;
+  await chrome.storage.local.set({ prefPlanCache: cache });
+  return plan;
+}
+
 // LinkedIn content search has no workplace or seniority facet, so these words are
 // only a nudge — matchPrompt does the real filtering.
 function buildQueries(titles, profile) {
-  const place = WORKPLACE_WORD[profile.workplace] || "";
   const years = profile.mode === "jobs" && profile.yearsExp ? `${profile.yearsExp} years` : "";
-  return titles.slice(0, 6).map((title) =>
-    [`hiring "${title}"`, place, years].filter(Boolean).join(" ")
-  );
+  const terms = (profile.prefPlan && profile.prefPlan.keywords) || [];
+  const places = profile.workplaces && profile.workplaces.length ? profile.workplaces : ["all"];
+  const out = [];
+  for (const title of titles) {
+    for (const p of places) {
+      out.push([`hiring "${title}"`, WORKPLACE_WORD[p] || "", years, ...terms].filter(Boolean).join(" "));
+    }
+  }
+  return [...new Set(out)].slice(0, MAX_QUERIES);
 }
 
-async function suggestRoles({ mode, seed, yearsExp, workplace, openaiKey }) {
+async function suggestRoles({ mode, seed, yearsExp, workplace, prefs, openaiKey }) {
   if (!openaiKey) throw new Error("Add your OpenAI API key in Settings.");
   if (!seed) throw new Error("Nothing to expand yet.");
   const context = [
     mode === "jobs" ? `Target role: ${seed}` : `Freelance expertise: ${seed}`,
     yearsExp ? `Experience: ${yearsExp} years` : "",
     workplace && workplace !== "all" ? `Prefers ${workplace} work` : "",
+    prefs ? `Preferences: ${String(prefs).slice(0, 500)}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -293,14 +445,26 @@ function matchPrompt(profile, posts) {
 
   // The search keywords are only a hint, so the filtering happens here.
   const rules = [];
-  if (profile.workplace && profile.workplace !== "all") {
+  // "all" in the sweep means the user wants unfiltered results too.
+  const places = (profile.workplaces || []).filter((w) => w !== "all");
+  if (places.length && !(profile.workplaces || []).includes("all")) {
     rules.push(
-      `Exclude posts that clearly contradict ${profile.workplace} work. If the post never says, keep it.`
+      `Exclude posts that clearly contradict ${places.join(" or ")} work. If the post never says, keep it.`
     );
   }
   if (profile.mode === "jobs" && profile.yearsExp) {
     rules.push(
       `Exclude posts asking for seniority far outside ${profile.yearsExp} years. If the post never says, keep it.`
+    );
+  }
+  const plan = profile.prefPlan || EMPTY_PLAN;
+  if (plan.exclude.length) {
+    rules.push(`Exclude posts matching any of: ${plan.exclude.join("; ")}.`);
+  }
+  if (plan.include.length) {
+    rules.push(
+      `Prefer posts matching: ${plan.include.join("; ")}. Drop posts that clearly conflict. ` +
+        "If the post never says, keep it."
     );
   }
   rules.push("Skip weak matches. It is fine to return an empty list.");
@@ -326,6 +490,7 @@ async function fillContactsFromImages(openaiKey, posts) {
   postProgress(`Reading ${batch.length} post images for contact details…`);
   let found = 0;
   for (const post of batch) {
+    if (stopRequested) break;
     try {
       const dataUrl = await toJpegDataUrl(post.images[0]);
       if (!dataUrl) continue;
@@ -544,32 +709,37 @@ async function openaiJson(apiKey, { system, user }) {
   return JSON.parse(text);
 }
 
-async function connectGmail(clientId) {
-  if (!clientId) throw new Error("Paste your Google OAuth Client ID in Settings.");
-  const redirectUri = chrome.identity.getRedirectURL();
-  const url =
-    "https://accounts.google.com/o/oauth2/v2/auth" +
-    `?client_id=${encodeURIComponent(clientId)}` +
-    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-    "&response_type=token" +
-    `&scope=${encodeURIComponent(GMAIL_SCOPE)}` +
-    "&prompt=consent";
-  const redirect = await chrome.identity.launchWebAuthFlow({ url, interactive: true });
-  const chunk = (redirect.split("#")[1] || redirect.split("?")[1] || "");
-  const token = new URLSearchParams(chunk).get("access_token");
-  if (!token) {
-    throw new Error(
-      "Gmail login did not return a token. In Google Cloud, add this Authorized redirect URI to a Chrome extension (or Web) OAuth client: " +
-        redirectUri
-    );
+// Chrome owns the client ID (manifest "oauth2"), the consent UI, and token refresh.
+async function getGmailToken({ interactive }) {
+  try {
+    const res = await chrome.identity.getAuthToken({ interactive });
+    // Chrome 105+ resolves to { token }; older builds resolve to a bare string.
+    return (typeof res === "string" ? res : res && res.token) || "";
+  } catch (e) {
+    if (interactive) throw new Error(gmailAuthHint(e));
+    return "";
   }
-  await chrome.storage.local.set({ gmailToken: token, googleClientId: clientId });
-  return true;
 }
 
-async function getStoredGmailToken() {
-  const { gmailToken } = await chrome.storage.local.get("gmailToken");
-  return gmailToken || "";
+function gmailAuthHint(e) {
+  const msg = String(e?.message || e);
+  if (/not signed in|no.*account/i.test(msg)) {
+    return "Sign in to Chrome with the Google account you want drafts in, then try again.";
+  }
+  if (/bad client id|invalid client/i.test(msg)) {
+    return (
+      'manifest.json needs a valid "oauth2" client_id of type Chrome extension for item ID ' +
+      chrome.runtime.id +
+      "."
+    );
+  }
+  return msg;
+}
+
+async function connectGmail() {
+  const token = await getGmailToken({ interactive: true });
+  if (!token) throw new Error("Google did not return a token.");
+  return true;
 }
 
 async function createGmailDraft(token, to, subject, body) {
@@ -577,7 +747,24 @@ async function createGmailDraft(token, to, subject, body) {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
-  const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
+
+  let r = await postDraft(token, raw);
+  // Access tokens last about an hour. A 401 means this one died mid-run, so
+  // drop it from Chrome's cache and take a fresh one without prompting.
+  if (r.status === 401) {
+    await chrome.identity.removeCachedAuthToken({ token });
+    const fresh = await getGmailToken({ interactive: false });
+    if (!fresh) throw new Error("Gmail access expired. Click Connect Gmail again.");
+    r = await postDraft(fresh, raw);
+  }
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t.slice(0, 180));
+  }
+}
+
+function postDraft(token, raw) {
+  return fetch("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
     method: "POST",
     headers: {
       Authorization: "Bearer " + token,
@@ -585,8 +772,4 @@ async function createGmailDraft(token, to, subject, body) {
     },
     body: JSON.stringify({ message: { raw } }),
   });
-  if (!r.ok) {
-    const t = await r.text();
-    throw new Error(t.slice(0, 180));
-  }
 }
